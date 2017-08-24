@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 import json
+import logging
 
 from datetime import datetime
 from Crypto.Signature import PKCS1_v1_5
@@ -17,6 +18,7 @@ from .exceptions import (
     AliPayException,
     AliPayValidationError,
 )
+logger = logging.getLogger('openapi.alipay')
 
 
 class BaseAliPayClient(object):
@@ -29,29 +31,33 @@ class BaseAliPayClient(object):
     def sign_type(self):
         return self.__sign_type
 
+    @property
+    def gateway(self):
+        if self.__custom_gateway:
+            return self.__custom_gateway
+        return "https://openapi.alipay.com/gateway.do"
+
     def __init__(self,
                  appid=None,
                  notify_url=None,
                  private_key=None,
                  alipay_public_key=None,
                  sign_type="RSA2",
-                 debug=False):
+                 custom_gateway=None,
+                 verify_return_data=True):
         self.__appid = appid
         self.__notify_url = notify_url
         self.__private_key = private_key
         self.__alipay_public_key = alipay_public_key
+        self.__sign_type = sign_type
+        self.__custom_gateway = custom_gateway
+        self.__verify = verify_return_data
 
         self.__check_internal_configuration()
 
         if sign_type not in ("RSA", "RSA2"):
             raise AliPayException(None,
                                   "Unsupported sign type {}".format(sign_type))
-        self.__sign_type = sign_type
-
-        if debug is True:
-            self.__gateway = "https://openapi.alipaydev.com/gateway.do"
-        else:
-            self.__gateway = "https://openapi.alipay.com/gateway.do"
 
     def __ordered_data(self, data):
         complex_keys = []
@@ -146,17 +152,25 @@ class BaseAliPayClient(object):
         """
         return data if verification succeeded, else raise exception
         """
-
+        logger.info('alipay return, %r', raw_string)
         response = json.loads(raw_string)
+        if 'error_response' in response:
+            raise AliPayException(code=response['error_response']['code'],
+                                  msg=response['error_response']['msg'])
+
         result = response[response_type]
-        sign = response["sign"]
+        try:
+            sign = response["sign"]
+        except KeyError:
+            raise AliPayException(result['code'], result['msg'])
 
         # locate string to be signed
         raw_string = self.get_string_to_be_signed(
             raw_string, response_type
         )
 
-        if not self._verify(raw_string, sign, self.__alipay_public_key):
+        if self.__verify and \
+                not self._verify(raw_string, sign, self.__alipay_public_key):
             raise AliPayValidationError
         return result
 
@@ -200,7 +214,7 @@ class BaseAliPayClient(object):
 
     def _request(self, method, timeout=10, **kwargs):
         data = {
-            "app_id": self.__appid,
+            "app_id": str(self.__appid),
             "format": "JSON",
             "charset": "utf-8",
             "sign_type": self.__sign_type,
@@ -211,20 +225,22 @@ class BaseAliPayClient(object):
         if kwargs:
             data.update(kwargs)
 
-        url = self.__gateway + "?" + self._sign_data(data, self.__private_key)
+        url = self.gateway + "?" + self._sign_data(data, self.__private_key)
+        logger.info('alipay request url: %r', url)
         raw_string = urlopen(url, timeout=timeout).read().decode("utf-8")
         response_type = method.replace('.', '_') + '_response'
         return self.__verify_and_return_data(raw_string, response_type)
 
 
 class AliPayClient(BaseAliPayClient):
+    def request(self, method, **kwargs):
+        timeout = kwargs.pop('timeout', 10)
+        return self._request(method, timeout=timeout, **kwargs)
+
     def get_oauth_token(self, grant_type, **kwargs):
         return self._request('alipay.system.oauth.token',
                              grant_type=grant_type,
                              **kwargs)
 
-
-
-
-
-
+    def ele_order_sync(self, **kwargs):
+        return self._request('koubei.catering.ele.order.sync', **kwargs)
