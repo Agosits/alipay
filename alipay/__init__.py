@@ -213,7 +213,6 @@ class BaseAliPayClient(object):
         return raw_string[left_index: right_index + 1]
 
     def _request(self, method, timeout=10, **kwargs):
-        return_request_url = kwargs.get('return_request_url')
         data = {
             "app_id": str(self.__appid),
             "format": "JSON",
@@ -228,6 +227,8 @@ class BaseAliPayClient(object):
 
         url = self.gateway + "?" + self._sign_data(data, self.__private_key)
         logger.info('alipay request url: %r', url)
+        return_request_url = kwargs.get('biz_content', {})\
+            .get('return_request_url')
         if return_request_url:
             return url
         raw_string = urlopen(url, timeout=timeout).read().decode("utf-8")
