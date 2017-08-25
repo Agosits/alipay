@@ -227,6 +227,10 @@ class BaseAliPayClient(object):
 
         url = self.gateway + "?" + self._sign_data(data, self.__private_key)
         logger.info('alipay request url: %r', url)
+        return_request_url = kwargs.get('biz_content', {})\
+            .get('return_request_url')
+        if return_request_url:
+            return url
         raw_string = urlopen(url, timeout=timeout).read().decode("utf-8")
         response_type = method.replace('.', '_') + '_response'
         return self.__verify_and_return_data(raw_string, response_type)
